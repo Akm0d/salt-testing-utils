@@ -1,11 +1,10 @@
 #!/usr/bin/env python
 import logging
-import subprocess
-from time import sleep
-
 import pexpect
+
 from argparse import ArgumentParser
 from os import chdir, environ, path
+from time import sleep
 from typing import List, Dict
 
 logger = logging.getLogger(__name__)

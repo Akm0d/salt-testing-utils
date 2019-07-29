@@ -1,12 +1,11 @@
 #!/usr/bin/env python
 import logging
 import subprocess
-from argparse import ArgumentParser
-from time import sleep
 
-from tqdm import trange
+from argparse import ArgumentParser
 from os import chdir, environ, path
-from typing import Dict, List
+from tqdm import trange
+from typing import List
 
 logger = logging.getLogger(__name__)
 

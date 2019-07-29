@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 import logging
-import sysrsync
 import subprocess
+import sysrsync
 
 from argparse import ArgumentParser
 from os import path
-from table import Table
+from ptable import Table
 
 logger = logging.getLogger(__name__)
 
