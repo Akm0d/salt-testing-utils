@@ -4,6 +4,7 @@ import pexpect
 
 from argparse import ArgumentParser
 from os import chdir, environ, path
+from sys import stdout
 from time import sleep
 from typing import List, Dict
 
@@ -13,7 +14,7 @@ PS1 = 'AWAITING NEXT COMMAND: '
 
 
 class Table:
-    def __init__(self, machines: List[str] = None, nofail: bool = False, kitchen_cmd: List[str] = None,
+    def __init__(self, platform: str = None, nofail: bool = False, kitchen_cmd: List[str] = None,
                  shell: str = 'sh', env: Dict[str, str] = None, pre_cmd: List[str] = None, init_cmd: List[str] = None):
         logger.debug("Setting Table")
         if env:
@@ -25,30 +26,30 @@ class Table:
         self.log_base = '/var/log/table/'
         self.kitchen_cmd = kitchen_cmd if kitchen_cmd else ['kitchen']
         self.local_shell = self.init_shell(pexpect.spawn(shell, env=environ.copy(),
-                                           logfile=open('{}tablesh.log'.format(self.log_base), 'wb+')), pre_cmd + init_cmd)
+                                                         logfile=stdout.buffer),
+                                           pre_cmd + init_cmd)
         logger.debug('Initialized local shell')
 
         self.nofail = nofail
         self.list = set(self.exec(' '.join(self.kitchen_cmd + ['list', '-b'])).split())
-        self.process = dict()
-        if not machines:
-            machines = ['']
-        for m in machines:
-            found = False
-            for l in self.list:
-                if m in l:
-                    self.process[l] = self.init_shell(pexpect.spawn(shell, env=environ.copy(),
-                                                      logfile=open('{}{}.log'.format(self.log_base, l), 'wb+')), pre_cmd)
-                    found = True
-            if not found:
-                self.process[m] = self.init_shell(pexpect.spawn(shell, env=environ.copy(),
-                                                  logfile=open('{}{}.log'.format(self.log_base, m), 'wb+')), pre_cmd)
+
+        self.platform = None
+        # Handle a partial or incomplete platform name
+        for l in self.list:
+            if platform in l:
+                self.process = self.init_shell(pexpect.spawn(shell, env=environ.copy(),
+                                                             logfile=stdout.buffer), pre_cmd)
+                self.platform = l
+        if not self.platform:
+            self.process = self.init_shell(pexpect.spawn(shell, env=environ.copy(),
+                                                         logfile=stdout.buffer), pre_cmd)
+            self.platform = platform
+
         self.wait()
-        self.active_machine = sorted(set(self.process.keys())).copy().pop()
         logger.debug("Table Ready")
 
     def __str__(self):
-        return self.exec(' '.join(self.kitchen_cmd + ['list']))
+        return self.exec(' '.join(self.kitchen_cmd + ['list', self.platform]))
 
     def init_shell(self, shell: pexpect.pty_spawn, pre_cmd: List[str]):
         shell.sendline('export PS1="{}"'.format(PS1))
@@ -84,62 +85,38 @@ class Table:
         """
         Wait for all subprocesses to finish, on fail, give an error and quit
         """
-        for machine, process in self.process.items():
-            process.sendline('')
-            process.expect(PS1)
+        self.process.sendline('')
+        self.process.expect(PS1)
 
-    def create(self, machine: str = ''):
-        logger.debug('Creating machine {}'.format(machine if machine else 'ALL'))
-        self.exec(' '.join(self.kitchen_cmd + ['create', machine]), shell=self.process[machine])
+    def create(self):
+        logger.debug('Creating machine {}'.format(self.platform))
+        self.exec(' '.join(self.kitchen_cmd + ['create', self.platform]), shell=self.process)
 
-    def create_all(self):
-        for m in self.process.keys():
-            self.create(m)
-        self.wait()
+    def converge(self):
+        logger.debug('Converging machine {}'.format(self.platform))
+        self.exec(' '.join(self.kitchen_cmd + ['converge', self.platform]), shell=self.process)
 
-    def converge(self, machine: str = ''):
-        logger.debug('Converging machine {}'.format(machine if machine else 'ALL'))
-        self.exec(' '.join(self.kitchen_cmd + ['converge', machine]), shell=self.process[machine])
-
-    def converge_all(self):
-        for m in self.process.keys():
-            self.converge(m)
-        self.wait()
-
-    def login(self, machine: str):
-        logger.debug('Logging into machine {}'.format(machine if machine else 'ALL'))
-        self.exec(' '.join(self.kitchen_cmd + ['login', machine]), shell=self.process[machine])
+    def login(self):
+        logger.debug('Logging into machine {}'.format(self.platform))
+        self.exec(' '.join(self.kitchen_cmd + ['login', self.platform]), shell=self.process)
         print(PS1, end='')
-        self.process[machine].interact()
+        self.process.interact()
 
-    def verify(self, machine: str = '', test: str = ''):
+    def verify(self, test: str = ''):
         logger.debug(
-            'Running tests in {} on {}'.format(test if test else 'salt://tests', machine if machine else 'ALL'))
+            'Running tests in {} on {}'.format(test if test else 'salt://tests', self.platform))
         environ['KITCHEN_TESTS'] = test
         # TODO Add option or try/except for the following environment variables
-        # environ['DONT_DOWNLOAD_ARTEFACTS'] = '1'
+        environ['DONT_DOWNLOAD_ARTEFACTS'] = '1'
         # environ['ONLY_DOWNLOAD_ARTEFACTS'] = '1'
         logger.debug("Environment: {}".format(environ))
 
-        self.exec(';'.join('export {}="{}"'.format(k, v) for k, v in environ.items()), shell=self.process[machine])
-        self.exec(' '.join(self.kitchen_cmd + ['verify', machine]), shell=self.process[machine])
+        self.exec(';'.join('export {}="{}"'.format(k, v) for k, v in environ.items()), shell=self.process)
+        self.exec(' '.join(self.kitchen_cmd + ['verify', self.platform]), shell=self.process)
 
-    def verify_all(self, test: str = ''):
-        for m in self.process.keys():
-            self.verify(machine=m, test=test)
-        self.wait()
-
-    def destroy(self, machine: str = ''):
-        logger.debug('Destroying machine {}'.format(machine if machine else 'ALL'))
-        self.exec(' '.join(self.kitchen_cmd + ['destroy', machine]), shell=self.process[machine])
-
-    def destroy_all(self, thorough=False):
-        if thorough:
-            self.exec(' '.join(self.kitchen_cmd + ['destroy']))
-        else:
-            for m in self.process.keys():
-                self.destroy(m)
-            self.wait()
+    def destroy(self):
+        logger.debug('Destroying machine {}'.format(self.platform))
+        self.exec(' '.join(self.kitchen_cmd + ['destroy', self.platform]), shell=self.process)
 
 
 if __name__ == '__main__':
@@ -147,7 +124,7 @@ if __name__ == '__main__':
     parser = ArgumentParser(description='Wrapper around kitchen-salt')
     parser.add_argument('-r', '--root', type=str, help=' full path to the salt repo root',
                         default=path.expanduser('~/PycharmProjects/salt'))
-    parser.add_argument('machine', type=str, help='The specific platforms to run on', default=[], nargs='*')
+    parser.add_argument('platform', type=str, help='The specific platforms to run on', default=[], nargs='*')
     parser.add_argument('-t', '--test', type=str, action='append', default=[],
                         help='A specific test to run relative to the salt repo root')
     parser.add_argument('-l', '--list', action='store_true', help='list the available machines and exit')
@@ -173,23 +150,23 @@ if __name__ == '__main__':
     if args.expensive:
         environ['NOX_PASSTHROUGH_OPTS'] = '--run-expensive'
 
-    table = Table(args.machine, nofail=args.no_fail)
+    table = Table(args.platform, nofail=args.no_fail)
     # If all the flags are false, then we will do all of them
     do_all = all(not flag for flag in [args.create, args.converge, args.verify, args.destroy, args.list, args.login])
     try:
         if do_all or args.create:
-            table.create_all()
+            table.create()
         if do_all or args.converge:
-            table.converge_all()
+            table.create()
         if args.login:
-            table.login(table.active_machine)
+            table.login()
             args.preserve = True
         if do_all or args.verify:
             if args.test:
                 for t in args.test:
-                    table.verify_all(t)
+                    table.verify(t)
             else:
-                table.verify_all()
+                table.verify()
     finally:
         print(table)
         if args.list:

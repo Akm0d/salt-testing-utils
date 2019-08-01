@@ -80,7 +80,7 @@ if __name__ == '__main__':
         cloud_env['NOX_PASSTHROUGH_OPTS'] = '--run-expensive'
 
     # Set the shell on the cloud host to /bin/sh
-    table = Table([args.platform], nofail=args.no_fail, kitchen_cmd=['bundle', 'exec', 'kitchen'],
+    table = Table(args.platform, nofail=args.no_fail, kitchen_cmd=['bundle', 'exec', 'kitchen'],
                   shell='ssh {}'.format(args.cloud, args.root).format(args.cloud),
                   init_cmd=[
                       'bundle install --without ec2 windows macos opennebula vagrant --with docker',
@@ -90,7 +90,7 @@ if __name__ == '__main__':
                       'cd {}'.format(args.root),
                       ';'.join('export {}="{}"'.format(k, v) for k, v in cloud_env.items()),
                   ])
-    instance = table.active_machine
+    instance = table.platform
 
     # Add cloud options based on the instance name
     distro, version, pyver = instance.split('-')
@@ -105,28 +105,28 @@ if __name__ == '__main__':
     do_all = all(not flag for flag in [args.create, args.converge, args.verify, args.destroy, args.list, args.login])
     try:
         if do_all or args.create or args.login:
-            table.create(instance)
+            table.create()
         if do_all or args.converge or args.login:
             table.exec(
                 "ssh-agent /bin/bash -c 'ssh-add ~/.ssh/kitchen.pem; bundle exec kitchen converge {}'".format(instance),
                 shell=table.process[instance])
         if args.login:
-            table.login(instance)
+            table.login()
             args.preserve = True
         if do_all or args.verify:
             if args.test:
                 for t in args.test:
-                    table.verify(instance, t)
+                    table.verify(t)
             else:
-                table.verify(instance)
+                table.verify()
     finally:
         print(table)
         if args.list:
             exit(0)
         # Cleanup
         if args.destroy:
-            table.destroy_all(args.preserve)
+            table.destroy()
         elif do_all and not args.preserve:
-            table.destroy_all(True)
+            table.destroy()
 
     logger.info("DONE!")
