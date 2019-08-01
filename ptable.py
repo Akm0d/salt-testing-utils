@@ -44,7 +44,7 @@ class Table:
                 self.process[m] = self.init_shell(pexpect.spawn(shell, env=environ.copy(),
                                                   logfile=open('{}{}.log'.format(self.log_base, m), 'wb+')), pre_cmd)
         self.wait()
-        self.active_machine = set(self.process.keys()).copy().pop()
+        self.active_machine = sorted(set(self.process.keys())).copy().pop()
         logger.debug("Table Ready")
 
     def __str__(self):
@@ -116,6 +116,9 @@ class Table:
         logger.debug(
             'Running tests in {} on {}'.format(test if test else 'salt://tests', machine if machine else 'ALL'))
         environ['KITCHEN_TESTS'] = test
+        # TODO Add option or try/except for the following environment variables
+        # environ['DONT_DOWNLOAD_ARTEFACTS'] = '1'
+        # environ['ONLY_DOWNLOAD_ARTEFACTS'] = '1'
         logger.debug("Environment: {}".format(environ))
 
         self.exec(';'.join('export {}="{}"'.format(k, v) for k, v in environ.items()), shell=self.process[machine])
