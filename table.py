@@ -5,35 +5,42 @@ import subprocess
 from argparse import ArgumentParser
 from os import chdir, environ, path
 from tqdm import trange
-from typing import List
+from typing import List, Dict
 
 logger = logging.getLogger(__name__)
 
 
 class Table:
     class KitchenList(set):
-        def __init__(self):
+        def __init__(self, kitchen_cmd: List[str] = None, env: Dict[str, str] = None, platform: str = None):
+            self.platform = platform if platform else ''
+            self.env = env
+            self.kitchen_cmd = kitchen_cmd if kitchen_cmd else ['kitchen']
             set.__init__(self, {x.decode() for x in
-                                subprocess.check_output(['kitchen', 'list', '-b'], stderr=subprocess.PIPE).split()})
+                                subprocess.check_output(self.kitchen_cmd + ['list', '-b', self.platform], stderr=subprocess.PIPE, env=self.env.copy()).split()})
             logger.debug('Fetching list')
 
         def __str__(self):
-            return subprocess.check_output(['kitchen', 'list']).decode()
+            return subprocess.check_output(self.kitchen_cmd + ['list', self.platform], env=self.env.copy()).decode()
 
-    def __init__(self, machines: List[str] = None, nofail:bool = False):
+    def __init__(self, machines: List[str] = None, nofail: bool = False, kitchen_cmd: List[str] = None,
+                 env: Dict[str, str] = None):
+        self.platform = ' '.join(machines)
+        self.env = env if env else environ
         self.nofail = nofail
-        self.list = self.KitchenList()
+        self.list = self.KitchenList(kitchen_cmd, self.env.copy(), platform=self.platform)
         self.process = dict()
+        self.kitchen_cmd = kitchen_cmd if kitchen_cmd else ['kitchen']
         if not machines:
             machines = ['']
         for m in machines:
             found = False
             for l in self.list:
                 if m in l:
-                    self.process[l] = subprocess.Popen(['echo', 'Initialized', l])
+                    self.process[l] = subprocess.Popen(['echo', 'Initialized', l], env=self.env.copy())
                     found = True
             if not found:
-                self.process[m] = subprocess.Popen(['echo', 'Initialized', m])
+                self.process[m] = subprocess.Popen(['echo', 'Initialized', m], env=env.copy())
         self.wait()
         self.active_machine = machines[0] if len(self.process) > 1 else set(self.process.keys()).copy().pop()
 
@@ -66,9 +73,11 @@ class Table:
         progress.close()
 
     def create(self, machine: str = ''):
+        if not machine:
+            machine = self.active_machine
         logger.debug('Creating machine {}'.format(machine if machine else 'ALL'))
         assert self.process[machine].returncode is not None, "'{}' Process is not finished".format(machine)
-        self.process[machine] = subprocess.Popen(['kitchen', 'create', machine], env=environ.copy(),)
+        self.process[machine] = subprocess.Popen(self.kitchen_cmd + ['create', machine], env=self.env.copy(), )
 
     def create_all(self):
         for m in self.process.keys():
@@ -76,30 +85,36 @@ class Table:
         self.wait()
 
     def converge(self, machine: str = ''):
+        if not machine:
+            machine = self.active_machine
         logger.debug('Converging machine {}'.format(machine if machine else 'ALL'))
         assert self.process[machine].returncode is not None, "'{}' Process is not finished".format(machine)
-        self.process[machine] = subprocess.Popen(['kitchen', 'converge', machine], env=environ.copy())
+        self.process[machine] = subprocess.Popen(self.kitchen_cmd + ['converge', machine], env=self.env.copy())
 
     def converge_all(self):
         for m in self.process.keys():
             self.converge(m)
         self.wait()
 
-    def login(self, machine:str):
+    def login(self, machine: str):
+        if not machine:
+            machine = self.active_machine
         logger.debug('Logging into machine {}'.format(machine if machine else 'ALL'))
         assert self.process[machine].returncode is not None, "'{}' Process is not finished".format(machine)
-        cmd = ['kitchen', 'login', machine]
+        cmd = self.kitchen_cmd + ['login', machine]
         logger.debug('CMD: ' + ' '.join(cmd))
-        blocked_call = subprocess.Popen(cmd, env=environ.copy())
+        blocked_call = subprocess.Popen(cmd, env=self.env.copy())
         blocked_call.wait()
 
     def verify(self, machine: str = '', test: str = ''):
+        if not machine:
+            machine = self.active_machine
         logger.debug(
             'Running tests in {} on {}'.format(test if test else 'salt://tests', machine if machine else 'ALL'))
         assert self.process[machine].returncode is not None, "'{}' Process is not finished".format(machine)
-        environ['KITCHEN_TESTS'] = test
-        logger.debug("Environment: {}".format(environ))
-        self.process[machine] = subprocess.Popen(['kitchen', 'verify', machine], env=environ.copy())
+        self.env['KITCHEN_TESTS'] = test
+        logger.debug("Environment: {}".format(self.env))
+        self.process[machine] = subprocess.Popen(self.kitchen_cmd + ['verify', machine], env=self.env.copy())
 
     def verify_all(self, test: str = ''):
         for m in self.process.keys():
@@ -107,9 +122,11 @@ class Table:
         self.wait()
 
     def destroy(self, machine: str = ''):
+        if not machine:
+            machine = self.active_machine
         logger.debug('Destroying machine {}'.format(machine if machine else 'ALL'))
         assert self.process[machine].returncode is not None, "'{}' Process is not finished".format(machine)
-        self.process[machine] = subprocess.Popen(['kitchen', 'destroy', machine], env=environ.copy())
+        self.process[machine] = subprocess.Popen(self.kitchen_cmd + ['destroy', machine], env=self.env.copy())
 
     def destroy_all(self):
         for m in self.process.keys():
@@ -148,7 +165,7 @@ if __name__ == '__main__':
     if args.expensive:
         environ['NOX_PASSTHROUGH_OPTS'] = '--run-expensive'
 
-    table = Table(args.machine, nofail=args.no_fail)
+    table = Table(args.machine, nofail=args.no_fail, env=environ)
     # If all the flags are false, then we will do all of them
     do_all = all(not flag for flag in [args.create, args.converge, args.verify, args.destroy, args.list, args.login])
     try:
@@ -170,7 +187,8 @@ if __name__ == '__main__':
         if args.list:
             exit(0)
         # Cleanup
-        if (do_all and not args.preserve) or (args.destroy and not any(flag for flag in [args.create, args.converge, args.verify, args.list])):
+        if (do_all and not args.preserve) or (
+                args.destroy and not any(flag for flag in [args.create, args.converge, args.verify, args.list])):
             table.destroy_all()
 
     logger.info("DONE!")
