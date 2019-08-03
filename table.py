@@ -113,7 +113,6 @@ class Table:
             'Running tests in {} on {}'.format(test if test else 'salt://tests', machine if machine else 'ALL'))
         assert self.process[machine].returncode is not None, "'{}' Process is not finished".format(machine)
         self.env['KITCHEN_TESTS'] = test
-        logger.debug("Environment: {}".format(self.env))
         self.process[machine] = subprocess.Popen(self.kitchen_cmd + ['verify', machine], env=self.env.copy())
 
     def verify_all(self, test: str = ''):

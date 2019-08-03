@@ -3,24 +3,61 @@ import logging
 import subprocess
 
 from argparse import ArgumentParser
-from os import environ, path, chdir
+from git.repo.base import Repo as git
+from os import environ, path, chdir, mkdir
+from shutil import which
 from table import Table
 
 logger = logging.getLogger(__name__)
 
+local_path = path.join(path.dirname(path.realpath(__file__)))
 transport = 'ZeroMQ'
+RBENV = '2.4.2'
 cloud_env = {
     'NOX_ENV_NAME': 'runtests-cloud',
     'NOX_PASSTHROUGH_OPTS': '',
     'NOX_ENABLE_FROM_FILENAMES': 'true',
     'PATH': '~/.rbenv/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/root/bin',
     'PY_COLORS': '1',
-    'RBENV_VERSION': '2.4.2',
-# TODO Find out if these are needed for running the tests in docker
-#   'SALT_KITCHEN_PLATFORMS': 'var/jenkins/workspace/nox-cloud-platforms.yml',
-#   'SALT_KITCHEN_VERIFIER': '/var/jenkins/workspace/nox-verifier.yml',
-#   'SALT_KITCHEN_DRIVER': '/var/jenkins/workspace/driver.yml',
+    'RBENV_VERSION': RBENV,
+    'SALT_KITCHEN_VERIFIER': path.join(local_path, 'nox-verifier.yml'),
+    'SALT_KITCHEN_PLATFORMS': path.join(local_path, 'nox-cloud-platforms.yml'),
+    # TODO Find out if these are needed for running the tests in docker
+    #   'SALT_KITCHEN_DRIVER': '/var/jenkins/workspace/driver.yml',
 }
+
+
+def rbenv_install(version: str = '2.4.2', force:bool = False):
+    logger.debug('verifying that dependencies are installed')
+    # Centos 7 Deps
+    # git bzip2 gcc make openssl-devel readline-devel zlib-devel docker
+    assert all([which(pkg) for pkg in ('git', 'bzip2', 'gcc', 'docker')])
+
+    # Get paths
+    rbenv = path.join(local_path, '.rbenv')
+    plugins = path.join(rbenv, 'plugins')
+    ruby_build = path.join(plugins, 'ruby-build')
+    rbenv_bin = path.join(rbenv, 'bin', 'rbenv')
+    gem = path.join(rbenv, 'shims', 'gem')
+
+    # Setup paths
+    if not path.exists(rbenv):
+        assert git
+        git.clone_from('https://github.com/rbenv/rbenv.git', rbenv)
+    if not path.exists(plugins):
+        mkdir(plugins)
+    if not path.exists:
+        assert git
+        git.clone_from('https://github.com/rbenv/ruby-build.git', ruby_build)
+
+    #
+    logger.debug('Installing ruby version {}'.format(version))
+    assert subprocess.Popen([rbenv_bin, 'install', version, '-f' if force else '-s']).wait() == 0
+    logger.debug('Setting ruby version {} as global'.format(version))
+    assert subprocess.Popen([rbenv_bin, 'global', version]).wait() == 0
+    logger.debug('installing bundle')
+    # FIXME assert subprocess.Popen([gem, 'install', 'bundle']).wait() == 0
+
 
 if __name__ == '__main__':
     cloud_env.update(environ)
@@ -55,6 +92,7 @@ if __name__ == '__main__':
     logger.debug("ARGS: {}".format(args))
 
     # TODO Verify correct rbenv is installed
+    rbenv_install(RBENV)
     # TODO install rbenv if needed
     # TODO verify bundle, kitchen, and GemFile are usable. Install missing things
 
@@ -86,6 +124,8 @@ if __name__ == '__main__':
     table.env['TEST_PLATFORM'] = distro
     table.env['TEST_TRANSPORT'] = transport
 
+    logger.debug(
+        "Environment:\n{}".format('\n'.join('{}: {}'.format(k, v) for k, v in table.env.items())) + '\n' + '*' * 80)
     # If all the flags are false, then we will do all of them
     do_all = all(not flag for flag in [args.create, args.converge, args.verify, args.destroy, args.list, args.login])
     try:

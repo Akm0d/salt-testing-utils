@@ -2,3 +2,4 @@ pexpect
 sysrsync
 tqdm
 typing
+GitPython

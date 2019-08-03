@@ -1,4 +1,9 @@
+cloudpillar
+ssh
 .idea
+.rbenv
+__pycache__
 *.pyc
+*.sls
 *.swp
 *.log
